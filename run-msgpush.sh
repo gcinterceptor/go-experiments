@@ -1,0 +1,65 @@
+#!/bin/bash
+
+date
+set -x
+
+# Expected Parameters:
+# Example:
+# LB="3.3.3.3"
+# INSTANCES="1.1.1.1 2.2.2.2"
+
+# TODO(danielfireman): Check parameters.
+
+# Rounds.
+ROUND_START=1
+ROUND_END=1
+
+# GCI on/off switcher.
+# TODO(danielfireman): Add USE_GCI as parameter. It should change FILE_NAME_SUFFIX
+USE_GCI="true"
+FILE_NAME_SUFFIX="gci"
+
+# Output.
+OUTPUT_DIR="/tmp/2instances"
+
+# Overall experiment configuration (these bellow thend to be more static).
+MSG_SIZE=10240
+WINDOW_SIZE=1000
+GODEBUG=gctrace=1
+EXPERIMENT_DURATION=10s
+THROUGHPUT=1750
+
+for round in `seq ${ROUND_START} ${ROUND_END}`
+do
+    echo ""
+    echo "round ${round}: Bringing up server instances..."
+    for instance in ${INSTANCES};
+    do
+        ssh -i ~/fireman.sururu.key ubuntu@${instance} "killall msgpush 2>/dev/null; GODEBUG=${GODEBUG} nohup ./msgpush --msg_size=${MSG_SIZE} --window_size=${WINDOW_SIZE} --use_gci=${USE_GCI} >/dev/null 2>gctrace.out &"
+        sleep 5s
+    done
+
+    echo "round ${round}: Done. Starting load test in 10 seconds..."
+    sleep 10
+    ssh -i ~/fireman.sururu.key ubuntu@${LB} "sudo rm /var/log/nginx/*.log;  sudo systemctl restart nginx; killall wrk 2>/dev/null; bin/wrk -t2 -c100 -d${EXPERIMENT_DURATION} -R${THROUGHPUT} --latency --timeout=15s http://localhost > ~/wrk_${FILE_NAME_SUFFIX}_${round}.out; cp /var/log/nginx/access.log ~/nginx_access_${FILE_NAME_SUFFIX}_${round}.log; sed -i '1i timestamp;status;request_time;upstream_response_time' ~/nginx_access_${FILE_NAME_SUFFIX}_${round}.log; cp /var/log/nginx/error.log ~/nginx_error_${FILE_NAME_SUFFIX}_${round}.log"
+
+    echo "round ${round}: Done. Putting server instances down..."
+    i=0
+    for instance in ${INSTANCES};
+    do
+        cmd="killall msgpush; mv metrics.csv metrics_${FILE_NAME_SUFFIX}_${i}_${round}.csv; mv gctrace.out gctrace_${FILE_NAME_SUFFIX}_${i}_${round}.out"
+        ssh -i ~/fireman.sururu.key ubuntu@${instance} "$cmd"
+        ((i++))
+    done
+
+    echo "round ${round}: Done. Copying results and cleaning up instances..."
+    scp -i ~/fireman.sururu.key ubuntu@${LB}:~/\{*log,*.out\} ${OUTPUT_DIR}
+    ssh -i ~/fireman.sururu.key ubuntu@${LB} "rm *.log; rm *.out"
+    for instance in ${INSTANCES};
+    do
+        scp -i ~/fireman.sururu.key ubuntu@${instance}:~/\{metrics*.csv,gctrace*.out\} ${OUTPUT_DIR}
+        ssh -i ~/fireman.sururu.key ubuntu@${instance} "rm ~/metrics*.csv ~/gctrace*.out"
+    done
+    echo "round ${round}: Finished."
+    echo ""
+done
