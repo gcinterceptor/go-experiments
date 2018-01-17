@@ -10,23 +10,27 @@ set -x
 
 # TODO(danielfireman): Check parameters.
 
-# Rounds.
-ROUND_START=1
-ROUND_END=1
-
 # GCI on/off switcher.
-# TODO(danielfireman): Add USE_GCI as parameter. It should change FILE_NAME_SUFFIX
-USE_GCI="true"
-FILE_NAME_SUFFIX="gci"
+if [ "$USE_GCI" == "false" ];
+then
+    FILE_NAME_SUFFIX="nogci"
+else
+    USE_GCI="true"
+    FILE_NAME_SUFFIX="gci"
+fi
 
 # Output.
+# TODO(danielfireman): Add OUTPUT as parameter.
 OUTPUT_DIR="/tmp/2instances"
+
+ROUND_START=1
+ROUND_END=1
 
 # Overall experiment configuration (these bellow thend to be more static).
 MSG_SIZE=10240
 WINDOW_SIZE=1000
 GODEBUG=gctrace=1
-EXPERIMENT_DURATION=10s
+EXPERIMENT_DURATION=1m
 THROUGHPUT=1750
 
 for round in `seq ${ROUND_START} ${ROUND_END}`
@@ -41,7 +45,7 @@ do
 
     echo "round ${round}: Done. Starting load test in 10 seconds..."
     sleep 10
-    ssh -i ~/fireman.sururu.key ubuntu@${LB} "sudo rm /var/log/nginx/*.log;  sudo systemctl restart nginx; killall wrk 2>/dev/null; bin/wrk -t2 -c100 -d${EXPERIMENT_DURATION} -R${THROUGHPUT} --latency --timeout=15s http://localhost > ~/wrk_${FILE_NAME_SUFFIX}_${round}.out; cp /var/log/nginx/access.log ~/nginx_access_${FILE_NAME_SUFFIX}_${round}.log; sed -i '1i timestamp;status;request_time;upstream_response_time' ~/nginx_access_${FILE_NAME_SUFFIX}_${round}.log; cp /var/log/nginx/error.log ~/nginx_error_${FILE_NAME_SUFFIX}_${round}.log"
+    ssh -i ~/fireman.sururu.key ubuntu@${LB} "sudo rm /var/log/nginx/*.log;  sudo systemctl restart nginx; killall wrk 2>/dev/null; bin/wrk -t2 -c100 -d${EXPERIMENT_DURATION} -R${THROUGHPUT} --latency --timeout=15s http://localhost > ~/wrk_${FILE_NAME_SUFFIX}_${round}.out; cp /var/log/nginx/access.log ~/nginx_access_${FILE_NAME_SUFFIX}_${round}.log; cp /var/log/nginx/error.log ~/nginx_error_${FILE_NAME_SUFFIX}_${round}.log"
 
     echo "round ${round}: Done. Putting server instances down..."
     i=0
@@ -55,10 +59,15 @@ do
     echo "round ${round}: Done. Copying results and cleaning up instances..."
     scp -i ~/fireman.sururu.key ubuntu@${LB}:~/\{*log,*.out\} ${OUTPUT_DIR}
     ssh -i ~/fireman.sururu.key ubuntu@${LB} "rm *.log; rm *.out"
+    sed -i '1i timestamp;status;request_time;upstream_response_time' ${OUTPUT_DIR}/nginx_access_${FILE_NAME_SUFFIX}_${round}.log
+
+    i=0
     for instance in ${INSTANCES};
     do
         scp -i ~/fireman.sururu.key ubuntu@${instance}:~/\{metrics*.csv,gctrace*.out\} ${OUTPUT_DIR}
+        sed -i '1i gc gcnum time perctime wallclock wallclockmetric clock cputime cputimemetric cpu mem memmetric memgoal memgoalmetric goal numprocs p isforced' ${OUTPUT_DIR}/gctrace_${FILE_NAME_SUFFIX}_${i}_${round}.out;
         ssh -i ~/fireman.sururu.key ubuntu@${instance} "rm ~/metrics*.csv ~/gctrace*.out"
+        ((i++))
     done
     echo "round ${round}: Finished."
     echo ""
