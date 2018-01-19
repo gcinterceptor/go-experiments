@@ -1,0 +1,129 @@
+---
+title: "GCI-Go Reaches the Cloud: 2 Service Intances"
+author: "Daniel Fireman (danielfireman@gmail.com)"
+date: "January 12, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(resample)
+require(dplyr)
+require(stringr)
+```
+
+```{r nginx_al}
+read.al <- function(f) {
+  # https://lincolnloop.com/blog/tracking-application-response-time-nginx/
+  al <- read.csv(f, sep=";", colClasses=c("upstream_response_time"="character"))
+  # request processing time in seconds with a milliseconds resolution;
+  # time elapsed between the first bytes were read from the client and
+  # the log write after the last bytes were sent to the client
+  # http://nginx.org/en/docs/http/ngx_http_log_module.html.
+  al$request_time <- al$request_time * 1000 # Making it milliseconds.
+  # Calculating elapsed time. It is more useful than timestamp.
+  al <- al %>% arrange(timestamp)
+  al$exp_dur_ms <- c(0, al$timestamp[2:NROW(al)]-al$timestamp[1]) * 1000
+  al$hop1 <- sub(',.*$', '', al$upstream_response_time)
+  al$hop1 <- as.numeric(al$hop1)*1000
+  al$hop2 <- sub('^.*,', '', al$upstream_response_time)
+  al$hop2 <- as.numeric(al$hop2)*1000
+  al$num_hops <- str_count(al$upstream_response_time, ',')+1
+  return(al)
+}
+
+al.gci <- read.al("nginx_access_gci_300KB_5K_1.log")
+al.nogci <- read.al("nginx_access_nogci_300KB_5K_1.log")
+
+EXPERIMENT_DURATION <- 80000 # 80s
+
+crop.al <- function(al) {
+  return(filter(al, exp_dur_ms > 10000 & exp_dur_ms < (EXPERIMENT_DURATION-10000)))
+}
+
+crop.gctrace <- function(t) {
+  return(filter(t, time > 10000  & time < (EXPERIMENT_DURATION-10000)))
+}
+
+al.gci.cropped <- crop.al(al.gci)
+al.nogci.cropped <- crop.al(al.nogci)
+
+
+summary(al.gci.cropped)
+quantile(al.gci.cropped$request_time, c(0.9,0.99,0.999,0.9999, 0.99999))
+summary(al.nogci.cropped)
+quantile(al.nogci.cropped$request_time, c(0.9,0.99,0.999,0.9999, 0.99999))
+hist(al.gci.cropped$request_time, breaks=50)
+hist(al.nogci.cropped$request_time, breaks=50)
+```
+
+```{r gctrace}
+read.gctrace <- function(f) {
+  df <- read.csv(f, sep = " ")
+  df$wallclock <- as.character(df$wallclock)
+  df$walltime <-sapply(strsplit(df$wallclock, split="+", fixed=T) , function (x) sum(as.numeric(unlist(x))))
+  df$time <- as.numeric(gsub("@|s","", df$time))*1000 # Making it elaspsed time in ms.
+  df <- df %>% mutate(isforced = ifelse(is.na(isforced),0,isforced))
+  return(na.omit(df))
+}
+
+gctrace.gci <- read.gctrace("gctrace_gci_300KB_1K_0_1.out")
+gctrace.nogci <- read.gctrace("gctrace_nogci_300KB_1K_0_1.out")
+
+mean(gctrace.gci$walltime)
+sd(gctrace.gci$walltime)
+mean(gctrace.nogci$walltime)
+sd(gctrace.nogci$walltime)
+```
+
+```{r}
+requests_failed <- filter(al.gci.cropped, status != 200)
+summary(requests_failed$request_time)
+hist(requests_failed$request_time)
+requests_failed %>% arrange(desc(request_time))
+
+requests_resent <- filter(al.gci.cropped, num_hops > 1)
+summary(requests_resent)
+hist(requests_resent$request_time)
+num_requests_resent <- requests_resent  %>% count()
+requests_resent %>% arrange(desc(request_time))
+summary(requests_resent$hop1)
+hist(requests_resent$hop1)
+summary(requests_resent$hop2)
+hist(requests_resent$hop2)
+
+requests_direct <- filter(al.gci.cropped, !grepl(",", upstream_response_time))
+summary(requests_direct)
+hist(requests_direct$request_time)
+num_requests_direct <- requests_direct  %>% count()
+requests_direct %>% arrange(desc(request_time))
+```
+
+# LEFTOVERS --> KEEP READING FOR YOUR OWN AMUSEMENT.
+
+```{r}
+# A zero request time indicates that nginx never exhausted socket's 
+# output buffer while sending a response to a client, and hence was 
+# able to complete sending within a single event loop iteration. 
+# Time only refreshed before an event loop iteration, so in this 
+# case logged $request_time will be zero.
+# https://forum.nginx.org/read.php?29,246968,247040#msg-247040
+gci <- gci %>% filter(request_time != 0)
+
+
+ci.interval(sample(gci$request_time, size=1000))
+
+requests_resent <- filter(gci, grepl(",", upstream_response_time))
+num_requests_resent <- requests_resent  %>% count()
+
+
+qqnorm(gci$request_time)
+qqline(gci$request_time)
+
+
+```
+
+```{r}
+gctrace.gci.cropped <- crop.gctrace(gctrace.gci)
+plot(gctrace.gci.cropped$time, gctrace.gci.cropped$wallclock)
+```

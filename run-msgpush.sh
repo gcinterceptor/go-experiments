@@ -23,15 +23,18 @@ fi
 # TODO(danielfireman): Add OUTPUT as parameter.
 OUTPUT_DIR="/tmp/2instances"
 
-ROUND_START=1
-ROUND_END=1
-
 # Overall experiment configuration (these bellow thend to be more static).
-MSG_SIZE=10240
-WINDOW_SIZE=1000
+echo "ROUND_START: ${ROUND_START:=1}"
+echo "ROUND_END: ${ROUND_END:=1}"
+echo "USE_GCI: ${USE_GCI}"
+echo "EXPERIMENT_DURATION: ${EXPERIMENT_DURATION:=3m}"
+echo "MSG_SIZE: ${MSG_SIZE:=10240}"
+echo "THROUGHPUT: ${THROUGHPUT:=1750}"
+echo "WINDOW_SIZE: ${WINDOW_SIZE:=1000}"
+echo "SUFFIX: ${SUFFIX:=}"
+FILE_NAME_SUFFIX="${FILE_NAME_SUFFIX}${SUFFIX}"
 GODEBUG=gctrace=1
-EXPERIMENT_DURATION=1m
-THROUGHPUT=1750
+
 
 for round in `seq ${ROUND_START} ${ROUND_END}`
 do
@@ -40,11 +43,10 @@ do
     for instance in ${INSTANCES};
     do
         ssh -i ~/fireman.sururu.key ubuntu@${instance} "killall msgpush 2>/dev/null; GODEBUG=${GODEBUG} nohup ./msgpush --msg_size=${MSG_SIZE} --window_size=${WINDOW_SIZE} --use_gci=${USE_GCI} >/dev/null 2>gctrace.out &"
-        sleep 5s
     done
 
-    echo "round ${round}: Done. Starting load test in 10 seconds..."
-    sleep 10
+    sleep 5
+    echo "round ${round}: Done. Starting load test..."
     ssh -i ~/fireman.sururu.key ubuntu@${LB} "sudo rm /var/log/nginx/*.log;  sudo systemctl restart nginx; killall wrk 2>/dev/null; bin/wrk -t2 -c100 -d${EXPERIMENT_DURATION} -R${THROUGHPUT} --latency --timeout=15s http://localhost > ~/wrk_${FILE_NAME_SUFFIX}_${round}.out; cp /var/log/nginx/access.log ~/nginx_access_${FILE_NAME_SUFFIX}_${round}.log; cp /var/log/nginx/error.log ~/nginx_error_${FILE_NAME_SUFFIX}_${round}.log"
 
     echo "round ${round}: Done. Putting server instances down..."
