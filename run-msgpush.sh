@@ -1,4 +1,5 @@
 #!/bin/bash
+# IMPORTANT: This script requires pidstats (part of sysstas package).
 
 date
 set -x
@@ -42,7 +43,7 @@ do
     echo "round ${round}: Bringing up server instances..."
     for instance in ${INSTANCES};
     do
-        ssh -i ~/fireman.sururu.key ubuntu@${instance} "killall msgpush 2>/dev/null; GODEBUG=${GODEBUG} nohup ./msgpush --msg_size=${MSG_SIZE} --window_size=${WINDOW_SIZE} --use_gci=${USE_GCI} >/dev/null 2>gctrace.out &"
+        ssh -i ~/fireman.sururu.key ubuntu@${instance} "killall msgpush 2>/dev/null;killall pidstat 2>/dev/null; GODEBUG=${GODEBUG} nohup ./msgpush --msg_size=${MSG_SIZE} --window_size=${WINDOW_SIZE} --use_gci=${USE_GCI} >/dev/null 2>gctrace.out & nohup pidstat -C msgpush 1 | grep msgpush | sed s/,/./g |  awk '{if (\$0 ~ /[0-9]/) { print \$1\",\"\$2\",\"\$3\",\"\$4\",\"\$5\",\"\$6\",\"\$7\",\"\$8\",\"\$9; }  }'> cpu.csv 2>/dev/null &"
     done
 
     sleep 5
@@ -53,7 +54,7 @@ do
     i=0
     for instance in ${INSTANCES};
     do
-        cmd="killall msgpush; mv metrics.csv metrics_${FILE_NAME_SUFFIX}_${i}_${round}.csv; mv gctrace.out gctrace_${FILE_NAME_SUFFIX}_${i}_${round}.out"
+        cmd="killall msgpush; killall pidstat; mv cpu.csv cpu_${FILE_NAME_SUFFIX}_${i}_${round}.csv; mv gctrace.out gctrace_${FILE_NAME_SUFFIX}_${i}_${round}.out"
         ssh -i ~/fireman.sururu.key ubuntu@${instance} "$cmd"
         ((i++))
     done
@@ -66,9 +67,10 @@ do
     i=0
     for instance in ${INSTANCES};
     do
-        scp -i ~/fireman.sururu.key ubuntu@${instance}:~/\{metrics*.csv,gctrace*.out\} ${OUTPUT_DIR}
+        scp -i ~/fireman.sururu.key ubuntu@${instance}:~/\{cpu*.csv,gctrace*.out\} ${OUTPUT_DIR}
+        sed -i '1i time,ampm,uid,pid,usr,system,guest,cpu,cpuid' ${OUTPUT_DIR}/cpu_${FILE_NAME_SUFFIX}_${i}_${round}.csv
         sed -i '1i gc gcnum time perctime wallclock wallclockmetric clock cputime cputimemetric cpu mem memmetric memgoal memgoalmetric goal numprocs p isforced' ${OUTPUT_DIR}/gctrace_${FILE_NAME_SUFFIX}_${i}_${round}.out;
-        ssh -i ~/fireman.sururu.key ubuntu@${instance} "rm ~/metrics*.csv ~/gctrace*.out"
+        ssh -i ~/fireman.sururu.key ubuntu@${instance} "rm ~/cpu*.csv ~/gctrace*.out"
         ((i++))
     done
     echo "round ${round}: Finished."
