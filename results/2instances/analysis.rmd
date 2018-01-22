@@ -1,0 +1,319 @@
+---
+title: "GCI-Go reaches the Cloud: 2 Intances"
+author: "Daniel Fireman (danielfireman@gmail.com)"
+date: "January, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(resample)
+require(dplyr)
+require(stringr)
+require(cowplot)
+
+EXPERIMENT_DURATION <- 80000 # 80s
+```
+# Experiment setup
+
+* Experiment duration: 80secs (results ignored the first and last 10 seconds)
+* Number of experiment repetitions: 5
+* Throughput: 3000 reqs/sec
+* Number of buffered messages: 5000 (this will result in a ~2GB heap usage)
+* Message size: 300KB
+* Go: 1.8
+* Number of instances: 2
+* Servers: 2 vCPUs, 4GB RAM
+
+# Latency
+
+Latency was measured at the load balancer (NGINX).
+
+```{r accesslog.func}
+read.accesslog <- function(f) {
+  # https://lincolnloop.com/blog/tracking-application-response-time-nginx/
+  al <- read.csv(f, sep=";", colClasses=c("upstream_response_time"="character"))
+  # request processing time in seconds with a milliseconds resolution;
+  # time elapsed between the first bytes were read from the client and
+  # the log write after the last bytes were sent to the client
+  # http://nginx.org/en/docs/http/ngx_http_log_module.html.
+  al$request_time <- al$request_time * 1000 # Making it milliseconds.
+  # Calculating elapsed time. It is more useful than timestamp.
+  al <- al %>% arrange(timestamp)
+  al$exp_dur_ms <- c(0, al$timestamp[2:NROW(al)]-al$timestamp[1]) * 1000
+  al$hop1 <- sub(',.*$', '', al$upstream_response_time)
+  al$hop1 <- as.numeric(al$hop1)*1000
+  al$hop2 <- sub('^.*,', '', al$upstream_response_time)
+  al$hop2 <- as.numeric(al$hop2)*1000
+  al$num_hops <- str_count(al$upstream_response_time, ',')+1
+  # Removing the first and last 10 seconds from the experiment results.
+  return(filter(al, exp_dur_ms > 10000 & exp_dur_ms < (EXPERIMENT_DURATION-10000)))
+}
+```
+
+```{r al_3K_300KB_5K, echo=F, warning=F}
+al.gci <- rbind(
+  read.accesslog("/tmp/2instances/nginx_access_gci_3K_300KB_5K_1.log"),
+  read.accesslog("/tmp/2instances/nginx_access_gci_3K_300KB_5K_2.log"),
+  read.accesslog("/tmp/2instances/nginx_access_gci_3K_300KB_5K_3.log"),
+  read.accesslog("/tmp/2instances/nginx_access_gci_3K_300KB_5K_4.log"),
+  read.accesslog("/tmp/2instances/nginx_access_gci_3K_300KB_5K_5.log"))
+
+
+al.nogci <- rbind(
+  read.accesslog("/tmp/2instances/nginx_access_nogci_3K_300KB_5K_1.log"),
+  read.accesslog("/tmp/2instances/nginx_access_nogci_3K_300KB_5K_2.log"),
+  read.accesslog("/tmp/2instances/nginx_access_nogci_3K_300KB_5K_3.log"),
+  read.accesslog("/tmp/2instances/nginx_access_nogci_3K_300KB_5K_4.log"),
+  read.accesslog("/tmp/2instances/nginx_access_nogci_3K_300KB_5K_5.log"))
+```
+## Summaries
+
+```{r}
+print(paste("Number of requests considered (GCI On): ", NROW(al.gci)))
+summary(al.gci$request_time)
+print(paste("Number of requets considered (GCI Off): ", NROW(al.nogci)))
+summary(al.nogci$request_time)
+hist(log(al.gci$request_time), breaks=50, main="Overall Latency (GCI ON)", ylab = "Frequency", xlab="Latency in log scale (ms)")
+hist(log(al.nogci$request_time), breaks=50, main="Overall Latency (GCI OFF)",ylab = "Frequency", xlab="Latency in log scale (ms)")
+quantile(al.gci$request_time, c(0.9,0.99,0.999,0.9999, 0.99999))
+quantile(al.nogci$request_time, c(0.9,0.99,0.999,0.9999, 0.99999))
+```
+
+## Null-Hyphothesis check (around the median)
+
+```{r}
+# Non parametric test which checks the pseudo-median
+# https://en.wikipedia.org/wiki/Mann%E2%80%93Whitney_U_test
+wilcox.test(sample(al.gci$request_time, 50000), conf.int = TRUE, conf.level = 0.95)
+wilcox.test(sample(al.nogci$request_time, 50000), conf.int = TRUE, conf.level = 0.95)
+```
+
+# Failed Requests
+```{r}
+failed.requests <- filter(al.gci, status != 200)
+print(paste("Number of failed requests: ", NROW(failed.requests)))
+summary(failed.requests$request_time)
+```
+## Requests that have not been shed
+
+```{r direct_requests}
+direct.requests <- filter(al.gci, num_hops==1)
+print(paste("Number of requests that have not been shed: ", NROW(direct.requests), "(", (1-(NROW(direct.requests)/NROW(al.gci)))*100,"%)"))
+summary(direct.requests$request_time)
+hist(direct.requests$request_time, breaks=50, main="Latency of requests that have not been shed", xlab="Latency (ms)")
+quantile(direct.requests$request_time, c(0.9,0.99,0.999,0.9999, 0.99999))
+```
+
+## Shed requests
+
+The requests have been shed by the first upstream service and processed by the second.
+
+### Overall Stats
+
+```{r resent_requests}
+resent.requests <- filter(al.gci, num_hops > 1)
+print(paste("Number of shed requests: ", NROW(resent.requests), "(", (1-(NROW(resent.requests)/NROW(al.gci)))*100,"%)"))
+summary(resent.requests$request_time)
+hist(resent.requests$request_time, breaks=50, main="Latency of requests that have been shed", xlab="Latency (ms)")
+quantile(resent.requests$request_time, c(0.9,0.99,0.999,0.9999, 0.99999))
+```
+### First node stats
+
+Statistics about the time for a request to reach the first instance (upstream
+server), go over the queue and be shed.
+
+```{r resent_requests_hop1}
+summary(resent.requests$hop1)
+hist(resent.requests$hop1, main="Latency of the first upstream service (shed)", xlab="Latency (ms)")
+quantile(resent.requests$hop1, c(0.9,0.99,0.999,0.9999, 0.99999))
+```
+
+### Processing instance stats
+
+After being shed by the first instance the request is redirected. The following
+statistic represents the latency considering only of the second upstream server.
+
+```{r resent_requests_hop2}
+summary(resent.requests$hop2)
+hist(resent.requests$hop2, main="Latency of the second upstream service (shed)", xlab="Latency (ms)")
+quantile(resent.requests$hop2, c(0.9,0.99,0.999,0.9999, 0.99999))
+```
+
+# Garbage Collector
+
+```{r gctrace.func}
+# Parsing some of gctrace fields and doing some cleanup.
+read.gctrace <- function(f) {
+  df <- read.csv(f, sep = " ", colClasses=c("wallclock"="character", "mem"="character"))
+  df$walltime <-sapply(strsplit(df$wallclock, split="+", fixed=T) , function (x) sum(as.numeric(unlist(x))))
+  df$time <- as.numeric(gsub("@|s","", df$time))*1000 # Making it elaspsed time in ms.
+  df$isforced <- ifelse(is.na(df$isforced),0,df$isforced)
+  df$cleaned <-sapply(strsplit(df$mem, split="->", fixed=T), function (x) as.numeric(x[1])-as.numeric(x[3]))
+  # Removing the first and last 10 seconds from the experiment results.
+  df <- filter(df, time > 10000  & time < (EXPERIMENT_DURATION-10000))
+  return(na.omit(df))
+}
+```
+```{r gctrace, echo=F}
+gctrace.gci <- rbind(
+  read.gctrace("/tmp/2instances/gctrace_gci_3K_300KB_5K_0_1.out"),
+  read.gctrace("/tmp/2instances/gctrace_gci_3K_300KB_5K_1_1.out"),
+  read.gctrace("/tmp/2instances/gctrace_gci_3K_300KB_5K_0_2.out"),
+  read.gctrace("/tmp/2instances/gctrace_gci_3K_300KB_5K_1_2.out"),
+  read.gctrace("/tmp/2instances/gctrace_gci_3K_300KB_5K_0_3.out"),
+  read.gctrace("/tmp/2instances/gctrace_gci_3K_300KB_5K_1_3.out"),
+  read.gctrace("/tmp/2instances/gctrace_gci_3K_300KB_5K_0_4.out"),
+  read.gctrace("/tmp/2instances/gctrace_gci_3K_300KB_5K_1_4.out"),
+  read.gctrace("/tmp/2instances/gctrace_gci_3K_300KB_5K_0_5.out"),
+  read.gctrace("/tmp/2instances/gctrace_gci_3K_300KB_5K_1_5.out")
+)
+gctrace.nogci <- rbind(
+  read.gctrace("/tmp/2instances/gctrace_nogci_3K_300KB_5K_0_1.out"),
+  read.gctrace("/tmp/2instances/gctrace_nogci_3K_300KB_5K_1_1.out"),
+  read.gctrace("/tmp/2instances/gctrace_nogci_3K_300KB_5K_0_2.out"),
+  read.gctrace("/tmp/2instances/gctrace_nogci_3K_300KB_5K_1_2.out"),
+  read.gctrace("/tmp/2instances/gctrace_nogci_3K_300KB_5K_0_3.out"),
+  read.gctrace("/tmp/2instances/gctrace_nogci_3K_300KB_5K_1_3.out"),
+  read.gctrace("/tmp/2instances/gctrace_nogci_3K_300KB_5K_0_4.out"),
+  read.gctrace("/tmp/2instances/gctrace_nogci_3K_300KB_5K_1_4.out"),
+  read.gctrace("/tmp/2instances/gctrace_nogci_3K_300KB_5K_0_5.out"),
+  read.gctrace("/tmp/2instances/gctrace_nogci_3K_300KB_5K_1_5.out")
+)
+```
+
+## Overall Stats
+
+```{r gctrace.overall}
+print(paste("Total number of collections considered (GCI On):", NROW(gctrace.gci)))
+summary(gctrace.gci$walltime)
+print(paste("Total number of collections considered (GCI Off):", NROW(gctrace.nogci)))
+summary(gctrace.nogci$walltime)
+hist(gctrace.gci$walltime, breaks=50, main="Garbage Collection Duration (GCI On)", xlab="GC Duration - Wall time (ms)", ylab="Frequency")
+hist(gctrace.nogci$walltime, breaks=50, main="Garbage Collection Duration (GCI On)", xlab="GC Duration - Wall time (ms)", ylab="Frequency")
+quantile(gctrace.gci$walltime, c(0.9,0.99,0.999,0.9999, 0.99999))
+quantile(gctrace.nogci$walltime, c(0.9,0.99,0.999,0.9999, 0.99999))
+```
+
+## Number of MBs cleaned by GC
+```{r gctrace.cleaned}
+summary(gctrace.gci$cleaned)
+summary(gctrace.nogci$cleaned)
+hist(gctrace.gci$cleaned, breaks=50, main="Amount of garbage cleaned at each collection (GCI On)", xlab="Amount of garbage cleaned (MB)")
+hist(gctrace.nogci$cleaned, breaks=50, main="Amount of garbage cleaned at each collection (GCI Off)", xlab="Amount of garbage cleaned (MB)")
+quantile(gctrace.gci$cleaned, c(0.9,0.99,0.999,0.9999, 0.99999))
+quantile(gctrace.nogci$cleaned, c(0.9,0.99,0.999,0.9999, 0.99999))
+```
+
+# CPU Usage
+
+```{r cpu.func} 
+read.cpu <- function(f) {
+  df <- read.csv(f)
+  return(na.omit(df[11:NROW(df-10),]))
+}
+```
+
+```{r cpu_overall, echo=F, warning=F}
+cpu.gci <- rbind(
+  read.cpu("/tmp/2instances/cpu_gci_3K_300KB_5K_0_1.csv"),
+  read.cpu("/tmp/2instances/cpu_gci_3K_300KB_5K_1_1.csv"),
+  read.cpu("/tmp/2instances/cpu_gci_3K_300KB_5K_0_2.csv"),
+  read.cpu("/tmp/2instances/cpu_gci_3K_300KB_5K_1_2.csv"),
+  read.cpu("/tmp/2instances/cpu_gci_3K_300KB_5K_0_3.csv"),
+  read.cpu("/tmp/2instances/cpu_gci_3K_300KB_5K_1_3.csv"),
+  read.cpu("/tmp/2instances/cpu_gci_3K_300KB_5K_0_4.csv"),
+  read.cpu("/tmp/2instances/cpu_gci_3K_300KB_5K_1_4.csv"),
+  read.cpu("/tmp/2instances/cpu_gci_3K_300KB_5K_0_5.csv"),
+  read.cpu("/tmp/2instances/cpu_gci_3K_300KB_5K_1_5.csv")
+)
+cpu.nogci <- rbind(
+  read.cpu("/tmp/2instances/cpu_nogci_3K_300KB_5K_0_1.csv"),
+  read.cpu("/tmp/2instances/cpu_nogci_3K_300KB_5K_1_1.csv"),
+  read.cpu("/tmp/2instances/cpu_nogci_3K_300KB_5K_0_2.csv"),
+  read.cpu("/tmp/2instances/cpu_nogci_3K_300KB_5K_1_2.csv"),
+  read.cpu("/tmp/2instances/cpu_nogci_3K_300KB_5K_0_3.csv"),
+  read.cpu("/tmp/2instances/cpu_nogci_3K_300KB_5K_1_3.csv"),
+  read.cpu("/tmp/2instances/cpu_nogci_3K_300KB_5K_0_4.csv"),
+  read.cpu("/tmp/2instances/cpu_nogci_3K_300KB_5K_1_4.csv"),
+  read.cpu("/tmp/2instances/cpu_nogci_3K_300KB_5K_0_5.csv"),
+  read.cpu("/tmp/2instances/cpu_nogci_3K_300KB_5K_1_5.csv")
+)
+```
+```{r gctrace_overall}
+summary(cpu.gci$cpu)
+summary(cpu.nogci$cpu)
+hist((cpu.gci$cpu/200)*100, breaks=50, main="CPU Usage (GCI On)", xlab="CPU Usage (%)")
+hist((cpu.nogci$cpu/200)*100, breaks=50, main="CPU Usage (GCI Off)", xlab="CPU Usage (%)")
+quantile(cpu.gci$cpu, c(0.9,0.99,0.999,0.9999, 0.99999))
+quantile(cpu.nogci$cpu, c(0.9,0.99,0.999,0.9999, 0.99999))
+```
+
+## Null-Hyphothesis check (around the median)
+```{r}
+# Non parametric test which checks the pseudo-median
+# https://en.wikipedia.org/wiki/Mann%E2%80%93Whitney_U_test
+wilcox.test(cpu.gci$cpu, conf.int = TRUE, conf.level = 0.95)
+wilcox.test(cpu.nogci$cpu, conf.int = TRUE, conf.level = 0.95)
+```
+
+# Appendix
+
+## Commands used to execute the experiment
+
+Note: Using fake IP addresses.
+
+```
+$ INSTANCES="1.1.1.1 1.1.1.2" ./update-msgpush.sh 
+$ ROUND_START=1 ROUND_END=5 EXPERIMENT_DURATION=80s SUFFIX=_3K_300KB_5K THROUGHPUT=3000 MSG_SIZE=361200 WINDOW_SIZE=5000 USE_GCI=true INSTANCES="1.1.1.1 1.1.1.2 LB=1.1.1.5 ./run-msgpush.sh
+$ ROUND_START=1 ROUND_END=5 EXPERIMENT_DURATION=80s SUFFIX=_3K_300KB_5K THROUGHPUT=3000 MSG_SIZE=361200 WINDOW_SIZE=5000 USE_GCI=false INSTANCES="1.1.1.2 1.1.1.2" LB=1.1.1.5 ./run-msgpush.sh
+```
+
+## Nginx.conf
+
+Note: Using fake IP addresses.
+
+```
+user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+
+events {
+        worker_connections 768;
+        # multi_accept on;
+}
+
+http {
+        upstream backends {
+            server 1.1.1.1:3000 max_fails=0 fail_timeout=15s;
+            server 1.1.1.2:3000 max_fails=0 fail_timeout=15s;
+            #server 1.1.1.3:3000 max_fails=0 fail_timeout=15s;
+            #server 1.1.1.4:3000 max_fails=0 fail_timeout=15s;
+        }
+
+        server {
+            listen 80;
+
+            location / {
+                proxy_pass http://backends;
+                proxy_next_upstream  timeout error http_503;
+                proxy_next_upstream_tries 0;
+                proxy_read_timeout 5m;
+            }
+        }
+
+        ##
+        # Logging Settings
+        ##
+        log_format exp '$msec;$status;$request_time;$upstream_response_time';
+        access_log /var/log/nginx/access.log exp;
+        error_log /var/log/nginx/error.log;
+
+        ##
+        # Virtual Host Configs
+        ##
+
+        #include /etc/nginx/conf.d/*.conf;
+        #include /etc/nginx/sites-enabled/*;
+}
+```
