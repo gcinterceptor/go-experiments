@@ -20,11 +20,8 @@ else
     FILE_NAME_SUFFIX="gci"
 fi
 
-# Output.
-# TODO(danielfireman): Add OUTPUT as parameter.
-OUTPUT_DIR="/tmp/2instances"
-
-# Overall experiment configuration (these bellow thend to be more static).
+# Experiment configuration
+echo "OUTPUT_DIR: ${OUTPUT_DIR:=/tmp/2instances}"
 echo "ROUND_START: ${ROUND_START:=1}"
 echo "ROUND_END: ${ROUND_END:=1}"
 echo "USE_GCI: ${USE_GCI}"
