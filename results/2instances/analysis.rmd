@@ -67,12 +67,12 @@ al.nogci <- rbind(
   read.accesslog("/tmp/2instances/nginx_access_nogci_3K_300KB_5K_4.log"),
   read.accesslog("/tmp/2instances/nginx_access_nogci_3K_300KB_5K_5.log"))
 ```
-## Summaries
+## Overall Summary
 
 ```{r}
 print(paste("Number of requests considered (GCI On): ", NROW(al.gci)))
 summary(al.gci$request_time)
-print(paste("Number of requets considered (GCI Off): ", NROW(al.nogci)))
+print(paste("Number of requests considered (GCI Off): ", NROW(al.nogci)))
 summary(al.nogci$request_time)
 hist(log(al.gci$request_time), breaks=50, main="Overall Latency (GCI ON)", ylab = "Frequency", xlab="Latency in log scale (ms)")
 hist(log(al.nogci$request_time), breaks=50, main="Overall Latency (GCI OFF)",ylab = "Frequency", xlab="Latency in log scale (ms)")
@@ -80,7 +80,7 @@ quantile(al.gci$request_time, c(0.9,0.99,0.999,0.9999, 0.99999))
 quantile(al.nogci$request_time, c(0.9,0.99,0.999,0.9999, 0.99999))
 ```
 
-## Null-Hyphothesis check (around the median)
+## Null-Hypothesis check (around the median)
 
 ```{r}
 # Non parametric test which checks the pseudo-median
@@ -99,7 +99,7 @@ summary(failed.requests$request_time)
 
 ```{r direct_requests}
 direct.requests <- filter(al.gci, num_hops==1)
-print(paste("Number of requests that have not been shed: ", NROW(direct.requests), "(", (1-(NROW(direct.requests)/NROW(al.gci)))*100,"%)"))
+print(paste("Number of requests that have not been shed: ", NROW(direct.requests), "(", (NROW(direct.requests)/NROW(al.gci))*100,"%)"))
 summary(direct.requests$request_time)
 hist(direct.requests$request_time, breaks=50, main="Latency of requests that have not been shed", xlab="Latency (ms)")
 quantile(direct.requests$request_time, c(0.9,0.99,0.999,0.9999, 0.99999))
@@ -113,7 +113,7 @@ The requests have been shed by the first upstream service and processed by the s
 
 ```{r resent_requests}
 resent.requests <- filter(al.gci, num_hops > 1)
-print(paste("Number of shed requests: ", NROW(resent.requests), "(", (1-(NROW(resent.requests)/NROW(al.gci)))*100,"%)"))
+print(paste("Number of shed requests: ", NROW(resent.requests), "(", (NROW(resent.requests)/NROW(al.gci))*100,"%)"))
 summary(resent.requests$request_time)
 hist(resent.requests$request_time, breaks=50, main="Latency of requests that have been shed", xlab="Latency (ms)")
 quantile(resent.requests$request_time, c(0.9,0.99,0.999,0.9999, 0.99999))
