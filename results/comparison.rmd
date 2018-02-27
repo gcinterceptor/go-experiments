@@ -170,7 +170,7 @@ grid.arrange(
 
 * The load balancer sends all requests to each server known in a perfect distribution.
 * The comunication time of load balancer and server is one millisecond.
-* To model the time that a request stay at a server, choosing some value randomly from a experimental log may be enough.
+* To model the time that a request stay at a server, choose some value randomly from a experimental log may be enough.
 * To model the GCI behavior, reproduce how many requests were processed until GCI start shedding and reproduce how many requests should be shedded until GCI stop shedding may be enough.
 
 *Output*
