@@ -16,6 +16,8 @@ require(stringr)
 require(cowplot)
 
 source("functions.R")
+
+RESAMPLES <- 1000
 ```
 # Experiment setup
 
@@ -50,22 +52,103 @@ al1.sim.gci <- filter(al1.sim.gci, done == "True")
 al1.exp.gci <- filter(al1.exp.gci, status == 200)
 ```
 
+## Graphical Comparison
 
-```{r plots}
+*Summary*
+
+```{r, fig.asp=0.5, fig.align="center"}
+# If you don't trim the library, your computer could die trying to resample.
 al1.cmp <- rbind(
-  data.frame("latency"=al1.sim.gci$service_time*1000, type="Simulator"),
-  data.frame("latency"=al1.exp.gci$request_time, type="Experiment"))
+  data.frame("latency"=sample(al1.sim.gci$service_time*1000, RESAMPLES), type="Simulator"),
+  data.frame("latency"=sample(al1.exp.gci$request_time, RESAMPLES), type="Experiment"))
 
 ggplot(al1.cmp, aes(type, latency)) +
   geom_boxplot() +
-  ggtitle("Median") +
+  ggtitle("Summary") +
   ylab("Latency(ms)") +
   xlab("Type")
 ```
 
+
+*95% Confidence Intervals For Median and Tail*
+
+It is important for the simulator needs to be a good model for the median and tail latency. Thus, we
+performed statistical tests at both parts of the latency distribution. We analyzed 3 parts of the tail:
+90, 99, 99.9 percentile.
+
+Confidence intervals for the median where calculated using the Wilcoxon signed (non-parametric) method. Confidence intervals at the tail where calculated using bootstrap resampling basic (1000 samples).
+
+```{r, fig.align="center"}
+ci.median <- function(x) {
+  wt <- wilcox.test(sample(x, 1000), conf.level=0.95, conf.int = T)
+  r <- wt$conf.int
+  names(r) <- c("ymin", "ymax")
+  return(r)
+}
+
+p99 <- function(x) {
+  return(quantile(x, 0.99))
+}
+
+p999 <- function(x) {
+  return(quantile(x, 0.999))
+}
+
+p9999 <- function(x) {
+  return(quantile(x, 0.9999))
+}
+
+ci.p <- function(x, p) {
+  ci.fun <- function(data, indices) {
+    return(c(quantile(data[indices], c(p)), var(data)))
+  }
+  b <- boot(x, ci.fun, R=RESAMPLES)
+  bci <- boot.ci(b)
+  return(data.frame("ymin"=c(bci$basic[4]), "ymax"=c(bci$basic[5])))
+}
+
+ci.p99 <- function(x) {
+  return(ci.p(x, 0.99))
+}
+
+ci.p999 <- function(x) {
+  return(ci.p(x, 0.999))
+}
+
+ci.p9999 <- function(x) {
+  return(ci.p(x, 0.9999))
+}
+
+grid.arrange(
+  ggplot(al1.cmp, aes(type, latency)) +
+    stat_summary(fun.y=median, geom="point", shape=23, size=2) +
+    stat_summary(fun.data=ci.median, geom="errorbar", width=0.05) +
+    ggtitle("Median") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+  ggplot(al1.cmp, aes(type, latency)) +
+    stat_summary(fun.y=p99, geom="point", shape=23, size=2) +
+    stat_summary(fun.data=ci.p99, geom="errorbar", width=0.05) +
+    ggtitle("99 Percentile") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+  ggplot(al1.cmp, aes(type, latency)) +
+    stat_summary(fun.y=p999, geom="point", shape=23, size=2) +
+    stat_summary(fun.data=ci.p999, geom="errorbar", width=0.05) +
+    ggtitle("99.9 Percentile") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+  ggplot(al1.cmp, aes(type, latency)) +
+    stat_summary(fun.y=p9999, geom="point", shape=23, size=2) +
+    stat_summary(fun.data=ci.p9999, geom="errorbar", width=0.05) +
+    ggtitle("99.99 Percentile") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+  ncol=2,
+  nrow=2)
+```
+
 # Simulation Results
-
-
 
 # Appendix
 
@@ -89,7 +172,6 @@ ggplot(al1.cmp, aes(type, latency)) +
 * The comunication time of load balancer and server is one millisecond.
 * To model the time that a request stay at a server, choosing some value randomly from a experimental log may be enough.
 * To model the GCI behavior, reproduce how many requests were processed until GCI start shedding and reproduce how many requests should be shedded until GCI stop shedding may be enough.
-
 
 *Output*
 
