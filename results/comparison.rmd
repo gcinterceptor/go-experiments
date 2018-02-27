@@ -7,6 +7,7 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo=F)
+knitr::opts_chunk$set(warning=F)
 
 require(gridExtra)
 require(boot)
@@ -43,6 +44,23 @@ al1.sim.gci <- rbind(
   read.csv("1i/sim_lb_gci_2.csv"),
   read.csv("1i/sim_lb_gci_3.csv"),
   read.csv("1i/sim_lb_gci_4.csv"))
+
+# Only consider latency of successfull requests.
+al1.sim.gci <- filter(al1.sim.gci, done == "True")
+al1.exp.gci <- filter(al1.exp.gci, status == 200)
+```
+
+
+```{r plots}
+al1.cmp <- rbind(
+  data.frame("latency"=al1.sim.gci$service_time*1000, type="Simulator"),
+  data.frame("latency"=al1.exp.gci$request_time, type="Experiment"))
+
+ggplot(al1.cmp, aes(type, latency)) +
+  geom_boxplot() +
+  ggtitle("Median") +
+  ylab("Latency(ms)") +
+  xlab("Type")
 ```
 
 # Simulation Results
@@ -55,9 +73,15 @@ al1.sim.gci <- rbind(
 
 *Inputs*
 
+# TODO: describe inputs in a very succint way
+
 *Assumptions*
 
+# TODO: describe assumptions in a very succint way
+
 *Output*
+
+# TODO: describe main outputs in a very succint way
 
 
 
