@@ -73,16 +73,30 @@ ggplot(al1.cmp, aes(type, latency)) +
 
 *Inputs*
 
-# TODO: describe inputs in a very succint way
+* The number of server instances to simulate.
+* A simulation duration.
+* A scenario. The simulator recognizes control and baseline scenarios. Control and Baseline means servers with gci and servers with no gci, respectively. 
+* The workload to be simulated at load balancer.    
+* A path where the simulator should put its results and a path where the experimental data is. 
+* The name of the file with the experimental data log and the column number related with request latency. 
+* A simulation ID to identify the simulation.
+* The name of the shedding log (when scenario is control).
+* How many shedding logs exist (when scenario is control).
 
 *Assumptions*
 
-# TODO: describe assumptions in a very succint way
+* The load balancer sends all requests to each server known in a perfect distribution.
+* The comunication time of load balancer and server is one millisecond.
+* To model the time that a request stay at a server, chose some value randomly from a experimental log may be enough.
+* To model the GCI behavior, reproduce how many requests were processed until GCI start shedding and reproduce how many request should be shedded until GCI stop shedding may be enough.
+
 
 *Output*
 
-# TODO: describe main outputs in a very succint way
-
-
-
+* The time when each request saved was created. A request saved is a request that has been already finished or lost.
+* The latency of each request saved.
+* The time between be accepted in a server and returned to a load balancer of each request.
+* If each request was done or not. It means if the request was processed in some server or refused for all.
+* How many times each request was fowarded to a server.
+* How many requests were created, shedded, refused and lost.
 
