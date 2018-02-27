@@ -1,0 +1,64 @@
+---
+title: "GCI-Go reaches the Cloud: Experiments and simulation results"
+author: "Daniel Fireman (danielfireman@gmail.com)"
+date: "January, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=F)
+
+require(gridExtra)
+require(boot)
+require(dplyr)
+require(stringr)
+require(cowplot)
+
+source("functions.R")
+```
+# Experiment setup
+
+* Throughput: 80
+* Threads: 1
+* Connections: 2
+* Message size (amount of memory allocated per request): 204800
+* Experiment duration: 120s
+* Instance: 2cores, 1GB RAM
+
+# Simulator Cross-Validation
+
+*Simulator Assumptions*
+
+* Linear Scalability
+* Network latency is constant: 1ms
+
+*Hyphotesis*
+
+* $H_{0}$: The simulated latency is different from experimental latency for 1, 2 and 4 instances.
+
+```{r}
+al1.exp.gci <- accesslog("1i", "gci", 4)
+al1.sim.gci <- rbind(
+  read.csv("1i/sim_lb_gci_1.csv"),
+  read.csv("1i/sim_lb_gci_2.csv"),
+  read.csv("1i/sim_lb_gci_3.csv"),
+  read.csv("1i/sim_lb_gci_4.csv"))
+```
+
+# Simulation Results
+
+
+
+# Appendix
+
+## Simulator
+
+*Inputs*
+
+*Assumptions*
+
+*Output*
+
+
+
+
