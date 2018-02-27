@@ -14,6 +14,7 @@ require(boot)
 require(dplyr)
 require(stringr)
 require(cowplot)
+require(ggplot2)
 
 source("functions.R")
 
