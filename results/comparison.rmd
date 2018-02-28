@@ -15,6 +15,7 @@ require(dplyr)
 require(stringr)
 require(cowplot)
 require(ggplot2)
+require(Matching)
 
 source("functions.R")
 
@@ -47,6 +48,7 @@ al1.sim.gci <- rbind(
   read.csv("1i/sim_lb_gci_2.csv"),
   read.csv("1i/sim_lb_gci_3.csv"),
   read.csv("1i/sim_lb_gci_4.csv"))
+al1.sim.gci$latency <- al1.sim.gci$latency*1000
 
 # Only consider latency of successfull requests.
 al1.sim.gci <- filter(al1.sim.gci, done == "True")
@@ -60,14 +62,23 @@ al1.exp.gci <- filter(al1.exp.gci, status == 200)
 ```{r, fig.asp=0.5, fig.align="center"}
 # If you don't trim the library, your computer could die trying to resample.
 al1.cmp <- rbind(
-  data.frame("latency"=sample(al1.sim.gci$service_time*1000, RESAMPLES), type="Simulator"),
+  data.frame("latency"=sample(al1.sim.gci$latency, RESAMPLES), type="Simulator"),
   data.frame("latency"=sample(al1.exp.gci$request_time, RESAMPLES), type="Experiment"))
 
-ggplot(al1.cmp, aes(type, latency)) +
-  geom_boxplot() +
-  ggtitle("Summary") +
-  ylab("Latency(ms)") +
-  xlab("Type")
+grid.arrange(
+  ggplot(al1.cmp, aes(type, latency)) +
+    geom_boxplot() +
+    ggtitle("Summary") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+   ggplot(al1.cmp, aes(latency, linetype=type)) +
+    stat_ecdf() +
+    ggtitle("ECDF") +
+    xlab("Latency(ms)") +
+    ylab("ECDF") +
+    theme(legend.position="top"),
+  ncol=2)
+  
 ```
 
 
@@ -149,7 +160,34 @@ grid.arrange(
   nrow=2)
 ```
 
-# Simulation Results
+## Hypothesis tests
+
+Even though the ECDF looked very similar and the confidence intervals seem to intersect, the comparison of the two distribution failed in both tests: Mann-Whitney-Wilcoxon U Test and Two-sample Kolmogorov-Smirnov test (check distribution, i.e. median, variance and shape). More information about the tests in appendix.
+
+As the comparison failed, we could not refute the null hypothesis.
+
+
+```{r}
+wilcox.test(sample(al1.sim.gci$latency, 30000), sample(al1.exp.gci$request_time, 30000))
+
+ks.test(sample(al1.sim.gci$latency, 30000), sample(al1.exp.gci$request_time, 30000))
+```
+
+## We need a better understanding of the methods
+
+I am not entirely convinced that the tests above are really meaningful. The main reason is that executing the same checks with smaller samples give us the opposite result:
+
+```{r}
+wilcox.test(sample(al1.sim.gci$latency, 50), sample(al1.exp.gci$request_time, 50))
+
+ks.test(sample(al1.sim.gci$latency, 50), sample(al1.exp.gci$request_time, 50))
+```
+
+Digging deeper into the tests, I found out that they may not very suitable when dealing with samples that contains that many ties. In fact, our data is so densely distributed that 80% of 30.000+ values range from 20-60 (integers). I am not sure about the exact statistical implications of that, but I have the feeling that treat this data as categorical would lead to more accurate checks. For instance, using the Chi Squared Test:
+
+```{r}
+chisq.test(sample(al1.sim.gci$latency, 30000), sample(al1.exp.gci$request_time, 30000))
+```
 
 # Appendix
 
@@ -183,3 +221,30 @@ grid.arrange(
 * How many times each request was fowarded to a server.
 * How many requests were created, shedded, refused and lost.
 
+## Kolmogorov-Smirnov Two-Sample Test
+
+The Kolmogorov–Smirnov statistic quantifies a distance between distribution functions of two samples. The null distribution of this statistic is calculated under the null hypothesis that the samples are drawn from the same distribution (in the two-sample case). In each case, the distributions considered under the null hypothesis are continuous distributions but are otherwise unrestricted.
+
+The two-sample K–S test is one of the most useful and general nonparametric methods for comparing two samples, as it is sensitive to differences in both location and shape of the empirical cumulative distribution functions of the two samples [Wikipedia](https://en.wikipedia.org/wiki/Kolmogorov%E2%80%93Smirnov_test).
+
+More references:
+
+* [KS Test in R](https://stats.stackexchange.com/questions/222294/understanding-kolmogorov-smirnov-test-in-r)
+
+* [KS Test in discrete variables](https://stats.stackexchange.com/questions/48317/kolmogorov-smirnov-with-discrete-data-what-is-proper-use-of-dgofks-test-in-r)
+
+* [KS Test](https://onlinecourses.science.psu.edu/stat414/node/234)
+
+* [KS Test](http://www.physics.csbsju.edu/stats/KS-test.html)
+
+## Two-sample Mann–Whitney U Test
+
+Two data samples are independent if they come from distinct populations and the samples do not affect each other. Using the Mann-Whitney-Wilcoxon Test, we can decide whether the population distributions are identical without assuming them to follow the normal distribution.
+
+More references:
+
+* [Two-sample Mann–Whitney U Test](http://rcompanion.org/handbook/F_04.html)
+
+* [Wikipedia](https://en.wikipedia.org/wiki/Mann%E2%80%93Whitney_U_test)
+
+* [R-Tutors](http://www.r-tutor.com/elementary-statistics/non-parametric-methods/mann-whitney-wilcoxon-test)
