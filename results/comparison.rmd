@@ -296,7 +296,9 @@ grid.arrange(
 
 ```
 
-But, as shown at the plots of interval coefficient (IC) above, the percentile 99.99 have take a promising result. Again, that was the expected result since at experimental result it have happen.
+Show Confidence intervals for median and tail it's important since GCI aims at improve tail latency without compromise the median and we need check its efficiency on that. 
+
+Confidence intervals for median where calculated using the Wilcoxon signed (non-parametric) method and confidence intervals at the tail where calculated using bootstrap resampling basic (1000 samples). Same as done to comparate simulation and experiment results.
 
 
 # Appendix
