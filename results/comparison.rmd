@@ -15,7 +15,6 @@ require(dplyr)
 require(stringr)
 require(cowplot)
 require(ggplot2)
-require(hydroGOF)
 
 source("functions.R")
 
@@ -63,7 +62,7 @@ al1.sim.nogci$latency <- al1.sim.nogci$latency*1000
 al1.sim.gci <- filter(al1.sim.gci, done == "True")
 al1.sim.nogci <- filter(al1.sim.nogci, done == "True")
 al1.exp.gci <- filter(al1.exp.gci, status == 200)
-al1.exp.nogci <- filter(al1.exp.gci, status == 200)
+al1.exp.nogci <- filter(al1.exp.nogci, status == 200)
 ```
 
 ## Graphical Comparison
@@ -239,12 +238,6 @@ wilcox.test(sample(al1.sim.gci$latency, 30000), sample(al1.exp.gci$request_time,
 ks.test(sample(al1.sim.gci$latency, 30000), sample(al1.exp.gci$request_time, 30000))
 ```
 
-I opened a little my research and found papers about model validation in other areas. In particular, [this](http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.532.2506&rep=rep1&type=pdf) provides a great range of statistics and explain those. Furthermore, I found the [gof function in the hydroGOF package](https://www.rforge.net/doc/packages/hydroGOF/gof.html). 
-
-```{r}
-gof(sample(al1.sim.gci$latency, 30000), sample(al1.exp.gci$request_time, 30000))
-```
-
 Here we can see quite a lot of indications the model is not a good fit. For instance, an R2=0, 
 
 **GCI OFF**
@@ -257,7 +250,7 @@ ks.test(sample(al1.sim.nogci$latency, 30000), sample(al1.exp.nogci$request_time,
 
 ## We need a better understanding of the methods
 
-I am not entirely convinced that the tests above are really meaningful. The main reason is that executing the same checks with smaller samples give us the opposite result:
+I am not entirely convinced that the tests above are really meaningful. First of the ECDF curves pretty much concide. Another reason is that executing the same checks with smaller samples give us the opposite result:
 
 ```{r}
 wilcox.test(sample(al1.sim.gci$latency, 50), sample(al1.exp.gci$request_time, 50))
