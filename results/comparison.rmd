@@ -15,7 +15,7 @@ require(dplyr)
 require(stringr)
 require(cowplot)
 require(ggplot2)
-require(Matching)
+require(hydroGOF)
 
 source("functions.R")
 
@@ -43,6 +43,8 @@ RESAMPLES <- 1000
 
 ```{r}
 al1.exp.gci <- accesslog("1i", "gci", 4)
+al1.exp.nogci <- accesslog("1i", "nogci", 4)
+
 al1.sim.gci <- rbind(
   read.csv("1i/sim_lb_gci_1.csv"),
   read.csv("1i/sim_lb_gci_2.csv"),
@@ -61,6 +63,7 @@ al1.sim.nogci$latency <- al1.sim.nogci$latency*1000
 al1.sim.gci <- filter(al1.sim.gci, done == "True")
 al1.sim.nogci <- filter(al1.sim.nogci, done == "True")
 al1.exp.gci <- filter(al1.exp.gci, status == 200)
+al1.exp.nogci <- filter(al1.exp.gci, status == 200)
 ```
 
 ## Graphical Comparison
@@ -74,6 +77,7 @@ al1.cmp <- rbind(
   data.frame("latency"=sample(al1.exp.gci$request_time, RESAMPLES), type="Experiment"))
 
 grid.arrange(
+  top = "GCI ON",
   ggplot(al1.cmp, aes(type, latency)) +
     geom_boxplot() +
     ggtitle("Summary") +
@@ -87,6 +91,24 @@ grid.arrange(
     theme(legend.position="top"),
   ncol=2)
   
+al1.nogci.cmp <- rbind(
+  data.frame("latency"=sample(al1.sim.nogci$latency, RESAMPLES), type="Simulator"),
+  data.frame("latency"=sample(al1.exp.nogci$request_time, RESAMPLES), type="Experiment"))
+
+grid.arrange(
+  top = "GCI OFF",
+  ggplot(al1.nogci.cmp, aes(type, latency)) +
+    geom_boxplot() +
+    ggtitle("Summary") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+   ggplot(al1.nogci.cmp, aes(latency, linetype=type)) +
+    stat_ecdf() +
+    ggtitle("ECDF") +
+    xlab("Latency(ms)") +
+    ylab("ECDF") +
+    theme(legend.position="top"),
+  ncol=2)
 ```
 
 
@@ -138,7 +160,11 @@ ci.p999 <- function(x) {
 ci.p9999 <- function(x) {
   return(ci.p(x, 0.9999))
 }
+```
 
+**GCI ON**
+
+```{r, fig.asp=0.5, fig.align="center"}
 grid.arrange(
   ggplot(al1.cmp, aes(type, latency)) +
     stat_summary(fun.y=median, geom="point", shape=23, size=2) +
@@ -168,18 +194,66 @@ grid.arrange(
   nrow=2)
 ```
 
+**GCI OFF**
+
+```{r, fig.asp=0.5, fig.align="center"}
+grid.arrange(
+  ggplot(al1.nogci.cmp, aes(type, latency)) +
+    stat_summary(fun.y=median, geom="point", shape=23, size=2) +
+    stat_summary(fun.data=ci.median, geom="errorbar", width=0.05) +
+    ggtitle("Median") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+  ggplot(al1.nogci.cmp, aes(type, latency)) +
+    stat_summary(fun.y=p99, geom="point", shape=23, size=2) +
+    stat_summary(fun.data=ci.p99, geom="errorbar", width=0.05) +
+    ggtitle("99 Percentile") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+  ggplot(al1.nogci.cmp, aes(type, latency)) +
+    stat_summary(fun.y=p999, geom="point", shape=23, size=2) +
+    stat_summary(fun.data=ci.p999, geom="errorbar", width=0.05) +
+    ggtitle("99.9 Percentile") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+  ggplot(al1.nogci.cmp, aes(type, latency)) +
+    stat_summary(fun.y=p9999, geom="point", shape=23, size=2) +
+    stat_summary(fun.data=ci.p9999, geom="errorbar", width=0.05) +
+    ggtitle("99.99 Percentile") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+  ncol=2,
+  nrow=2)
+```
+
 ## Hypothesis tests
 
 Even though the ECDF looked very similar and the confidence intervals seem to intersect, the comparison of the two distribution failed in both tests: Mann-Whitney-Wilcoxon U Test and Two-sample Kolmogorov-Smirnov test (check distribution, i.e. median, variance and shape). More information about the tests in appendix.
 
 As the comparison failed, we could not refute the null hypothesis.
 
+**GCI ON**
 
 ```{r}
 wilcox.test(sample(al1.sim.gci$latency, 30000), sample(al1.exp.gci$request_time, 30000))
-
 ks.test(sample(al1.sim.gci$latency, 30000), sample(al1.exp.gci$request_time, 30000))
 ```
+
+I opened a little my research and found papers about model validation in other areas. In particular, [this](http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.532.2506&rep=rep1&type=pdf) provides a great range of statistics and explain those. Furthermore, I found the [gof function in the hydroGOF package](https://www.rforge.net/doc/packages/hydroGOF/gof.html). 
+
+```{r}
+gof(sample(al1.sim.gci$latency, 30000), sample(al1.exp.gci$request_time, 30000))
+```
+
+Here we can see quite a lot of indications the model is not a good fit. For instance, an R2=0, 
+
+**GCI OFF**
+
+```{r}
+wilcox.test(sample(al1.sim.nogci$latency, 30000), sample(al1.exp.nogci$request_time, 30000))
+ks.test(sample(al1.sim.nogci$latency, 30000), sample(al1.exp.nogci$request_time, 30000))
+```
+
 
 ## We need a better understanding of the methods
 
@@ -193,8 +267,14 @@ ks.test(sample(al1.sim.gci$latency, 50), sample(al1.exp.gci$request_time, 50))
 
 Digging deeper into the tests, I found out that they may not very suitable when dealing with samples that contains that many ties. In fact, our data is so densely distributed that 80% of 30.000+ values range from 20-60 (integers). I am not sure about the exact statistical implications of that, but I have the feeling that treat this data as categorical would lead to more accurate checks. For instance, using the Chi Squared Test:
 
+**GCI ON**
 ```{r}
 chisq.test(sample(al1.sim.gci$latency, 30000), sample(al1.exp.gci$request_time, 30000))
+```
+
+**GCI OFF**
+```{r}
+chisq.test(sample(al1.sim.nogci$latency, 30000), sample(al1.exp.nogci$request_time, 30000))
 ```
 
 ## Simulation Results
@@ -207,6 +287,7 @@ chisq.test(sample(al1.sim.gci$latency, 30000), sample(al1.exp.gci$request_time, 
 * GCI Version: Go
 
 ```{r, fig.asp=0.5, fig.align="center"}
+
 # If you don't trim the library, your computer could die trying to resample.
 al1.cmp <- rbind(
   data.frame("latency"=sample(al1.sim.gci$latency, RESAMPLES), type="GCI ON"),
