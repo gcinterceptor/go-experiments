@@ -33,3 +33,43 @@ accesslog <- function(outdir, exp, n) {
   }
   return(al)
 }
+
+ci.median <- function(x) {
+  wt <- wilcox.test(sample(x, 1000), conf.level=0.95, conf.int = T)
+  r <- wt$conf.int
+  names(r) <- c("ymin", "ymax")
+  return(r)
+}
+
+p99 <- function(x) {
+  return(quantile(x, 0.99))
+}
+
+p999 <- function(x) {
+  return(quantile(x, 0.999))
+}
+
+p9999 <- function(x) {
+  return(quantile(x, 0.9999))
+}
+
+ci.p <- function(x, p) {
+  ci.fun <- function(data, indices) {
+    return(c(quantile(data[indices], c(p)), var(data)))
+  }
+  b <- boot(x, ci.fun, R=RESAMPLES)
+  bci <- boot.ci(b)
+  return(data.frame("ymin"=c(bci$basic[4]), "ymax"=c(bci$basic[5])))
+}
+
+ci.p99 <- function(x) {
+  return(ci.p(x, 0.99))
+}
+
+ci.p999 <- function(x) {
+  return(ci.p(x, 0.999))
+}
+
+ci.p9999 <- function(x) {
+  return(ci.p(x, 0.9999))
+}

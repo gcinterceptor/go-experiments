@@ -1,0 +1,250 @@
+---
+title: "GCI-Go reaches the Cloud: Experiments and simulation results"
+author: "Daniel Fireman (danielfireman@gmail.com)"
+date: "January, 2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=F)
+knitr::opts_chunk$set(warning=F)
+knitr::opts_chunk$set(cache=T)
+
+require(gridExtra)
+require(boot)
+require(dplyr)
+require(stringr)
+require(cowplot)
+require(ggplot2)
+
+source("functions.R")
+
+RESAMPLES <- 2000
+```
+
+# Simulator Validation
+
+The output of the simulator and the independent variable of our 1-factor
+experiment is the latency of one request. We would like to determine if the
+simulator is valid. We are going to this by comparing the simulator and
+experiment results. 
+
+This first valation refers to a 1-factor experiment and the independent variable
+is the latency (continuous variable, positive integer).
+
+**Hyphotesis**
+
+* $H_{0}$: The simulated latency is different from experimental latency.
+
+```{r}
+al1.exp.gci <- accesslog("1i", "gci", 4)
+al1.exp.nogci <- accesslog("1i", "nogci", 4)
+
+al1.sim.gci <- rbind(
+  read.csv("1i/sim_lb_gci_1.csv"),
+  read.csv("1i/sim_lb_gci_2.csv"),
+  read.csv("1i/sim_lb_gci_3.csv"),
+  read.csv("1i/sim_lb_gci_4.csv"))
+al1.sim.gci$latency <- al1.sim.gci$latency*1000
+
+al1.sim.nogci <- rbind(
+  read.csv("1i/sim_lb_nogci_1.csv"),
+  read.csv("1i/sim_lb_nogci_2.csv"),
+  read.csv("1i/sim_lb_nogci_3.csv"),
+  read.csv("1i/sim_lb_nogci_4.csv"))
+al1.sim.nogci$latency <- al1.sim.nogci$latency*1000
+
+# Only consider latency of successfull requests.
+al1.sim.gci <- filter(al1.sim.gci, done == "True")
+al1.sim.nogci <- filter(al1.sim.nogci, done == "True")
+al1.exp.gci <- filter(al1.exp.gci, status == 200)
+al1.exp.nogci <- filter(al1.exp.nogci, status == 200)
+```
+
+## Graphical Comparison
+
+It is important for the simulator needs to be a good model for the median and tail latency. Thus, we
+performed statistical tests at both parts of the latency distribution. We analyzed 3 parts of the tail:
+90, 99, 99.9 percentile.
+
+Confidence intervals for the median where calculated using the Wilcoxon signed (non-parametric) method. Confidence intervals at the tail where calculated using bootstrap resampling basic (1000 samples).
+
+### Treatment Group
+
+```{r, fig.asp=0.5, fig.align="center"}
+# If you don't trim the library, your computer could die trying to resample.
+al1.cmp <- rbind(
+  data.frame("latency"=sample(al1.sim.gci$latency, RESAMPLES), type="Simulator"),
+  data.frame("latency"=sample(al1.exp.gci$request_time, RESAMPLES), type="Experiment"))
+
+grid.arrange(
+  ggplot(al1.cmp, aes(type, latency)) +
+    geom_boxplot() +
+    ggtitle("Summary") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+   ggplot(al1.cmp, aes(latency, linetype=type)) +
+    stat_ecdf() +
+    ggtitle("ECDF") +
+    xlab("Latency(ms)") +
+    ylab("ECDF") +
+    theme(legend.position="top"),
+  ncol=2)
+
+grid.arrange(
+  ggplot(al1.cmp, aes(type, latency)) +
+    stat_summary(fun.y=median, geom="point", shape=23, size=2) +
+    stat_summary(fun.data=ci.median, geom="errorbar", width=0.05) +
+    ggtitle("Median") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+  ggplot(al1.cmp, aes(type, latency)) +
+    stat_summary(fun.y=p99, geom="point", shape=23, size=2) +
+    stat_summary(fun.data=ci.p99, geom="errorbar", width=0.05) +
+    ggtitle("99 Percentile") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+  ggplot(al1.cmp, aes(type, latency)) +
+    stat_summary(fun.y=p999, geom="point", shape=23, size=2) +
+    stat_summary(fun.data=ci.p999, geom="errorbar", width=0.05) +
+    ggtitle("99.9 Percentile") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+  ggplot(al1.cmp, aes(type, latency)) +
+    stat_summary(fun.y=p9999, geom="point", shape=23, size=2) +
+    stat_summary(fun.data=ci.p9999, geom="errorbar", width=0.05) +
+    ggtitle("99.99 Percentile") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+  ncol=2,
+  nrow=2)
+```
+
+### Control Group
+
+```{r, fig.asp=0.5, fig.align="center"}
+al1.nogci.cmp <- rbind(
+  data.frame("latency"=sample(al1.sim.nogci$latency, RESAMPLES), type="Simulator"),
+  data.frame("latency"=sample(al1.exp.nogci$request_time, RESAMPLES), type="Experiment"))
+
+grid.arrange(
+  top = "Control Group",
+  ggplot(al1.nogci.cmp, aes(type, latency)) +
+    geom_boxplot() +
+    ggtitle("Summary") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+   ggplot(al1.nogci.cmp, aes(latency, linetype=type)) +
+    stat_ecdf() +
+    ggtitle("ECDF") +
+    xlab("Latency(ms)") +
+    ylab("ECDF") +
+    theme(legend.position="top"),
+  ncol=2)
+
+grid.arrange(
+  ggplot(al1.nogci.cmp, aes(type, latency)) +
+    stat_summary(fun.y=median, geom="point", shape=23, size=2) +
+    stat_summary(fun.data=ci.median, geom="errorbar", width=0.05) +
+    ggtitle("Median") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+  ggplot(al1.nogci.cmp, aes(type, latency)) +
+    stat_summary(fun.y=p99, geom="point", shape=23, size=2) +
+    stat_summary(fun.data=ci.p99, geom="errorbar", width=0.05) +
+    ggtitle("99 Percentile") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+  ggplot(al1.nogci.cmp, aes(type, latency)) +
+    stat_summary(fun.y=p999, geom="point", shape=23, size=2) +
+    stat_summary(fun.data=ci.p999, geom="errorbar", width=0.05) +
+    ggtitle("99.9 Percentile") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+  ggplot(al1.nogci.cmp, aes(type, latency)) +
+    stat_summary(fun.y=p9999, geom="point", shape=23, size=2) +
+    stat_summary(fun.data=ci.p9999, geom="errorbar", width=0.05) +
+    ggtitle("99.99 Percentile") +
+    ylab("Latency(ms)") +
+    xlab("Type"),
+  ncol=2,
+  nrow=2)
+```
+
+### Conclusions 
+
+ECDFs and confidence intervals for the median and tail seem to intersect. Is that enough?
+
+We searched for a test that could statistically confirm that both
+results - simulator and experiments - have the same distribution (median, variance
+and shape). 
+
+## Hypothesis tests
+
+Even though the ECDF looked very similar and the confidence intervals seem to intersect, the comparison of the two distribution failed in both tests: two-sample Wilcoxon rank sum test and two-sample Kolmogorov-Smirnov test (check distribution, i.e. median, variance and shape).
+
+```{r}
+wilcox.test(sample(al1.sim.gci$latency, 30000), sample(al1.exp.gci$request_time, 30000), conf.int = T)
+wilcox.test(sample(al1.sim.nogci$latency, 30000), sample(al1.exp.nogci$request_time, 30000), conf.int = T)
+```
+
+The null hypothesis of the [two-sample Wilcoxon rank sum](http://data.library.virginia.edu/the-wilcoxon-rank-sum-test/) is taken as equal medians.
+Since we’re assuming our distributions are equal and the p-value bellow is really low,
+we could refute the null hyphotesis. Rejecting the null means we have
+evidence that the medians of the two populations differ. The R statistical programming
+environment, which we use to implement the Wilcoxon rank sum test below, refers to
+this a “location shift”.
+
+It is importante to notice the really low median of the difference confidence interval.
+
+```{r}
+ks.test(jitter(sample(al1.sim.gci$latency, 30000)), jitter(sample(al1.exp.gci$request_time, 30000)))
+ks.test(jitter(sample(al1.sim.nogci$latency, 30000)), jitter(sample(al1.exp.nogci$request_time, 30000)))
+```
+
+The Kolmogorov–Smirnov statistic quantifies a distance between distribution functions of two samples. The null distribution of this statistic is calculated under the null hypothesis that the samples are drawn from the same distribution (in the two-sample case). In each case, the distributions considered under the null hypothesis are continuous distributions but are otherwise unrestricted.
+
+The two-sample K–S test is one of the most useful and general nonparametric methods for comparing two samples, as it is sensitive to differences in both location and shape of the empirical cumulative distribution functions of the two samples [Wikipedia](https://en.wikipedia.org/wiki/Kolmogorov%E2%80%93Smirnov_test).
+
+The test has disadvantage that they are more sensitive to deviations near the centre of the distribution than at the tails.
+It is also well known that the test does not handle ties so well.
+
+## We need a better understanding of the methods
+
+I am not entirely convinced that the tests above are really meaningful. First of the ECDF curves pretty much concide. Another reason is that executing the same checks with smaller samples give us the opposite result:
+
+```{r}
+wilcox.test(sample(al1.sim.gci$latency, 50), sample(al1.exp.gci$request_time, 50))
+
+ks.test(sample(al1.sim.gci$latency, 50), sample(al1.exp.gci$request_time, 50))
+```
+
+Digging deeper into the tests, I found out that they may not very suitable when dealing with samples that contains that many ties. In fact, our data is so densely distributed that 80% of 30.000+ values range from 20-60 (integers). I am not sure about the exact statistical implications of that, but I have the feeling that treat this data as categorical would lead to more accurate checks. For instance, using the Chi Squared Test:
+
+```{r}
+chisq.test(sample(al1.sim.gci$latency, 30000), sample(al1.exp.gci$request_time, 30000))
+chisq.test(sample(al1.sim.nogci$latency, 30000), sample(al1.exp.nogci$request_time, 30000))
+```
+
+# Appendix
+
+## Experiment setup
+
+* Throughput: 80
+* Threads: 1
+* Connections: 2
+* Message size (amount of memory allocated per request): 204800
+* Experiment duration: 120s
+* Instance: 2cores, 1GB RAM
+
+## Kolmogorov-Smirnov Two-Sample Test
+
+More references:
+
+* [KS Test in R](https://stats.stackexchange.com/questions/222294/understanding-kolmogorov-smirnov-test-in-r)
+
+* [KS Test in discrete variables](https://stats.stackexchange.com/questions/48317/kolmogorov-smirnov-with-discrete-data-what-is-proper-use-of-dgofks-test-in-r)
+
+* [KS Test](https://onlinecourses.science.psu.edu/stat414/node/234)
+
+* [KS Test](http://www.physics.csbsju.edu/stats/KS-test.html)
